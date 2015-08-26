@@ -3,6 +3,7 @@ from django.contrib import auth
 from django.core.exceptions import ImproperlyConfigured
 
 from shibboleth.app_settings import SHIB_ATTRIBUTE_MAP, LOGOUT_SESSION_KEY
+from website.models import Profile
 
 class ShibbolethRemoteUserMiddleware(RemoteUserMiddleware):
     """
@@ -71,6 +72,10 @@ class ShibbolethRemoteUserMiddleware(RemoteUserMiddleware):
         to include a make_profile method that will create a Django user profile
         from the Shib provided attributes.  By default it does nothing.
         """
+        import datetime
+        now = datetime.datetime.now()
+        profile = Profile(user=user, andrew_id=shib_meta.get("username"), created_at=now, updated_at=now)
+        profile.save()
         return
 
     def setup_session(self, request):
