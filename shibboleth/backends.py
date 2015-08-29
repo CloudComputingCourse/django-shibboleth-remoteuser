@@ -1,6 +1,7 @@
 from django.db import connection
 from django.contrib.auth.models import User, Permission
 from django.contrib.auth.backends import RemoteUserBackend
+from website.models import Profile
 
 class ShibbolethRemoteUserBackend(RemoteUserBackend):
     """
@@ -44,3 +45,10 @@ class ShibbolethRemoteUserBackend(RemoteUserBackend):
             except User.DoesNotExist:
                 pass
         return user
+
+    def configure_user(self, user):
+        # This is here as a stub to allow subclassing of ShibbolethRemoteUserMiddleware
+        # to include a make_profile method that will create a Django user profile
+        # from the Shib provided attributes.  By default it does nothing.
+        profile = Profile(user=user, andrew_id=user.username.replace('@andrew.cmu.edu', ''))
+        profile.save()

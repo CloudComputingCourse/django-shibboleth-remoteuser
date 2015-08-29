@@ -61,22 +61,8 @@ class ShibbolethRemoteUserMiddleware(RemoteUserMiddleware):
             auth.login(request, user)
             user.set_unusable_password()
             user.save()
-            # call make profile.
-            self.make_profile(user, shib_meta)
             #setup session.
             self.setup_session(request)
-
-    def make_profile(self, user, shib_meta):
-        """
-        This is here as a stub to allow subclassing of ShibbolethRemoteUserMiddleware
-        to include a make_profile method that will create a Django user profile
-        from the Shib provided attributes.  By default it does nothing.
-        """
-        import datetime
-        now = datetime.datetime.now()
-        profile = Profile(user=user, andrew_id=shib_meta.get("username"), created_at=now, updated_at=now)
-        profile.save()
-        return
 
     def setup_session(self, request):
         """
