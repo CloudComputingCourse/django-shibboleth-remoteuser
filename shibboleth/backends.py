@@ -52,3 +52,4 @@ class ShibbolethRemoteUserBackend(RemoteUserBackend):
         # from the Shib provided attributes.  By default it does nothing.
         profile = Profile(user=user, andrew_id=user.username.replace('@andrew.cmu.edu', ''))
         profile.save()
+        return user
