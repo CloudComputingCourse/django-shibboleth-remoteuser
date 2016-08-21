@@ -1,9 +1,11 @@
 from django.contrib.auth.middleware import RemoteUserMiddleware
+from django.contrib.auth.models import Group
 from django.contrib import auth
 from django.core.exceptions import ImproperlyConfigured
 
-from shibboleth.app_settings import SHIB_ATTRIBUTE_MAP, LOGOUT_SESSION_KEY
-from website.models import Profile
+from shibboleth.app_settings import SHIB_ATTRIBUTE_MAP, GROUP_ATTRIBUTES, LOGOUT_SESSION_KEY
+from website.models import Person
+
 
 class ShibbolethRemoteUserMiddleware(RemoteUserMiddleware):
     """
@@ -20,15 +22,15 @@ class ShibbolethRemoteUserMiddleware(RemoteUserMiddleware):
                 " 'django.contrib.auth.middleware.AuthenticationMiddleware'"
                 " before the RemoteUserMiddleware class.")
 
-        #To support logout.  If this variable is True, do not
-        #authenticate user and return now.
-        if request.session.get(LOGOUT_SESSION_KEY) == True:
+        # To support logout.  If this variable is True, do not
+        # authenticate user and return now.
+        if request.session.get(LOGOUT_SESSION_KEY):
             return
         else:
-            #Delete the shib reauth session key if present.
-	        request.session.pop(LOGOUT_SESSION_KEY, None)
+            # Delete the shib reauth session key if present.
+            request.session.pop(LOGOUT_SESSION_KEY, None)
 
-        #Locate the remote user header.
+        # Locate the remote user header.
         try:
             username = request.META[self.header]
         except KeyError:
@@ -59,10 +61,30 @@ class ShibbolethRemoteUserMiddleware(RemoteUserMiddleware):
             # by logging the user in.
             request.user = user
             auth.login(request, user)
-            user.set_unusable_password()
-            user.save()
-            #setup session.
+            
+            # Upgrade user groups if configured in the settings.py
+            # If activated, the user will be associated with those groups.
+            if GROUP_ATTRIBUTES:
+                self.update_user_groups(request, user)
+            # call make profile.
+            self.make_profile(user, shib_meta)
+            # setup session.
             self.setup_session(request)
+
+    def make_profile(self, user, shib_meta):
+        """
+        This is here as a stub to allow subclassing of ShibbolethRemoteUserMiddleware
+        to include a make_profile method that will create a Django user profile
+        from the Shib provided attributes.  By default it does nothing.
+        """
+        # TODO : More testing and error handling
+	if user.person.all().exists():
+            pass # This user belongs to a Person with an existing account
+        else:
+            new_person = Person.objects.create(primary_id=user.username)
+            new_person.users.add(user)
+            new_person.save()
+        return
 
     def setup_session(self, request):
         """
@@ -71,16 +93,28 @@ class ShibbolethRemoteUserMiddleware(RemoteUserMiddleware):
         """
         return
 
-    def parse_attributes(self, request):
+    def update_user_groups(self, request, user):
+        groups = self.parse_group_attributes(request)
+        # Remove the user from all groups that are not specified in the shibboleth metadata
+        for group in user.groups.all():
+            if group.name not in groups:
+                group.user_set.remove(user)
+        # Add the user to all groups in the shibboleth metadata
+        for g in groups:
+            group, created = Group.objects.get_or_create(name=g)
+            group.user_set.add(user)
+
+    @staticmethod
+    def parse_attributes(request):
         """
-        Parse the incoming Shibboleth attributes.
+        Parse the incoming Shibboleth attributes and convert them to the internal data structure.
         From: https://github.com/russell/django-shibboleth/blob/master/django_shibboleth/utils.py
         Pull the mapped attributes from the apache headers.
         """
         shib_attrs = {}
         error = False
         meta = request.META
-        for header, attr in SHIB_ATTRIBUTE_MAP.items():
+        for header, attr in list(SHIB_ATTRIBUTE_MAP.items()):
             required, name = attr
             value = meta.get(header, None)
             shib_attrs[name] = value
@@ -88,6 +122,17 @@ class ShibbolethRemoteUserMiddleware(RemoteUserMiddleware):
                 if required:
                     error = True
         return shib_attrs, error
+
+    @staticmethod
+    def parse_group_attributes(request):
+        """
+        Parse the Shibboleth attributes for the GROUP_ATTRIBUTES and generate a list of them.
+        """
+        groups = []
+        for attr in GROUP_ATTRIBUTES:
+            groups += filter(bool, request.META.get(attr, '').split(';'))
+        return groups
+
 
 class ShibbolethValidationError(Exception):
     pass

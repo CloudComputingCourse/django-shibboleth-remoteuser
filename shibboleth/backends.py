@@ -1,7 +1,7 @@
-from django.db import connection
-from django.contrib.auth.models import User, Permission
+from django.contrib.auth.models import User
 from django.contrib.auth.backends import RemoteUserBackend
-from website.models import Profile
+from django.conf import settings
+
 
 class ShibbolethRemoteUserBackend(RemoteUserBackend):
     """
@@ -17,6 +17,8 @@ class ShibbolethRemoteUserBackend(RemoteUserBackend):
 
     # Create a User object if not already in the database?
     create_unknown_user = True
+    if hasattr(settings, 'CREATE_UNKNOWN_USER'):
+        create_unknown_user = settings.CREATE_UNKNOWN_USER
 
     def authenticate(self, remote_user, shib_meta):
         """
@@ -29,27 +31,34 @@ class ShibbolethRemoteUserBackend(RemoteUserBackend):
         """
         if not remote_user:
             return
-        user = None
         username = self.clean_username(remote_user)
-        shib_user_params = dict([(k, shib_meta[k]) for k in User._meta.get_all_field_names() if k in shib_meta])
+        field_names = [x.name for x in User._meta.get_fields()]
+        shib_user_params = dict([(k, shib_meta[k]) for k in field_names if k in shib_meta])
         # Note that this could be accomplished in one try-except clause, but
         # instead we use get_or_create when creating unknown users since it has
         # built-in safeguards for multiple threads.
         if self.create_unknown_user:
             user, created = User.objects.get_or_create(username=username, defaults=shib_user_params)
             if created:
+                """
+                @note: setting password for user needs on initial creation of user instead of after auth.login() of middleware.
+                because get_session_auth_hash() returns the salted_hmac value of salt and password.
+                If it remains after the auth.login() it will return a different auth_hash 
+                than what's stored in session "request.session[HASH_SESSION_KEY]".
+                Also we don't need to update the user's password everytime he logs in.
+                """
+                user.set_unusable_password()
+                user.save()
                 user = self.configure_user(user)
         else:
             try:
                 user = User.objects.get(username=username)
             except User.DoesNotExist:
-                pass
-        return user
-
-    def configure_user(self, user):
-        # This is here as a stub to allow subclassing of ShibbolethRemoteUserMiddleware
-        # to include a make_profile method that will create a Django user profile
-        # from the Shib provided attributes.  By default it does nothing.
-        profile = Profile(user=user, andrew_id=user.username.replace('@andrew.cmu.edu', ''))
-        profile.save()
+                return
+        # After receiving a valid user, we update the the user attributes according to the shibboleth
+        # parameters. Otherwise the parameters (like mail address, sure_name or last_name) will always
+        # be the initial values from the first login. Only save user object if there are any changes.
+        if not min([getattr(user, k) == v for k, v in shib_user_params.items()]):
+            user.__dict__.update(**shib_user_params)
+            user.save()
         return user
